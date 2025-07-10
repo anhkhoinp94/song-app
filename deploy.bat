@@ -1,3 +1,3 @@
 @echo off
-npm run predeploy
-npm run deploy
+call npm run predeploy
+call npm run deploy
