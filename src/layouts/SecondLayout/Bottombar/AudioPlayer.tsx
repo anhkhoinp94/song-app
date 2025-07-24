@@ -7,14 +7,15 @@ import PauseIcon from "@mui/icons-material/Pause";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import RepeatIcon from "@mui/icons-material/Repeat";
 import RepeatOnIcon from "@mui/icons-material/RepeatOn";
+import RepeatOneOnIcon from "@mui/icons-material/RepeatOneOn";
 import ReplayIcon from "@mui/icons-material/Replay";
 import Replay10Icon from "@mui/icons-material/Replay10";
 import ShuffleIcon from "@mui/icons-material/Shuffle";
 import ShuffleOnIcon from "@mui/icons-material/ShuffleOn";
 import SkipNextIcon from "@mui/icons-material/SkipNext";
 import SkipPreviousIcon from "@mui/icons-material/SkipPrevious";
-import { Box, Checkbox, IconButton, Slider, Tooltip, Typography, sliderClasses, useTheme } from "@mui/material";
-import { CSSProperties, ReactEventHandler, useContext, useEffect, useRef, useState } from "react";
+import { Box, Checkbox, IconButton, IconButtonOwnProps, Slider, Tooltip, Typography, sliderClasses, useTheme } from "@mui/material";
+import { CSSProperties, ReactEventHandler, ReactNode, useContext, useEffect, useRef, useState } from "react";
 import NextSongTimeoutProgress from "../NextSongTimeoutProgress";
 
 const handlePlayAbortError = (error: Error) => {
@@ -23,10 +24,29 @@ const handlePlayAbortError = (error: Error) => {
   }
 };
 
+const repeatStates = ["repeat", "repeat-one", "no-repeat"] as const;
+
+type RepeatState = typeof repeatStates[number];
+const repeatMap: Record<RepeatState, { title: string; icon: ReactNode; color?: IconButtonOwnProps["color"]; }> = {
+  repeat: {
+    title: "Repeat All",
+    icon: <RepeatOnIcon />,
+    color: "primary",
+  },
+  "repeat-one": {
+    title: "Repeat One",
+    icon: <RepeatOneOnIcon />,
+    color: "primary",
+  },
+  "no-repeat": {
+    title: "Repeat Off",
+    icon: <RepeatIcon />,
+  },
+};
+
 function AudioPlayer() {
   const theme = useTheme();
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
-  const playButtonTitle = isPlaying ? "Pause" : "Play";
   const selectedAudioFile = useAppSelector(selectSelectedAudioFile);
   const nextAudioFile = useAppSelector(selectNextAudioFile);
   const prevAudioFile = useAppSelector(selectPreviousAudioFile);
@@ -36,7 +56,9 @@ function AudioPlayer() {
   const [currentTime, setCurrentTime] = useState(0);
   const [bufferedTime, setBufferedTime] = useState(0);
   const isAutoPlay = useAppSelector(selectIsAutoPlay);
-  const [isRepeat, setIsRepeat] = useState(true);
+  const [repeatStateIndex, setRepeatStateIndex] = useState<number>(0);
+  const repeatState: RepeatState = repeatStates[repeatStateIndex];
+  const repeatStateData = repeatMap[repeatState];
   const audioFiles = useAppSelector(selectAudioFiles);
   const isLastInList = selectedAudioFile === audioFiles.at(-1);
   const volume = useAppSelector(selectVolume);
@@ -44,6 +66,9 @@ function AudioPlayer() {
   const cooldownTime = useAppSelector(selectCooldownTime);
   const nextSongTimeoutId = useRef<string | number>(undefined);
   const { smAndUp } = useContext(BreakpointsContext);
+  const playButtonTitle = isPlaying
+    ? "Pause"
+    : (audioDuration !== 0 && audioDuration === currentTime ? "Replay" : "Play");
   const dispatch = useAppDispatch();
 
   const handleShuffleChange = (_: React.ChangeEvent<HTMLInputElement>, checked: boolean) => {
@@ -53,6 +78,12 @@ function AudioPlayer() {
       dispatch(shuffleAudioFiles());
     }
   };
+
+  // use persistent state to check state inside timeout event
+  const repeatPersistentState = useRef<RepeatState>(repeatState);
+  useEffect(() => {
+    repeatPersistentState.current = repeatState;
+  }, [repeatState]);
 
   const handlePlayButtonClick = () => {
     if (audioRef.current.paused) {
@@ -101,14 +132,18 @@ function AudioPlayer() {
     setCurrentTime(audioDuration);
 
     if (isAutoPlay) {
-      if (isLastInList && !isRepeat) {
+      if (isLastInList && repeatState === "no-repeat") {
         return;
       }
 
       // schedule next song or play next song immediately
       if (cooldownTime) {
         nextSongTimeoutId.current = setTimeout(() => {
-          dispatch(nextAudio());
+          if (repeatPersistentState.current === "repeat-one") {
+            handlePlayButtonClick();
+          } else {
+            dispatch(nextAudio());
+          }
         }, cooldownTime) as unknown as string | number;
 
         dispatch(setCurrentTimeout({
@@ -116,7 +151,11 @@ function AudioPlayer() {
           duration: cooldownTime,
         }));
       } else {
-        dispatch(nextAudio());
+        if (repeatPersistentState.current === "repeat-one") {
+          handlePlayButtonClick();
+        } else {
+          dispatch(nextAudio());
+        }
       }
     }
   };
@@ -141,8 +180,9 @@ function AudioPlayer() {
     audioRef.current.currentTime = Math.min(audioRef.current.currentTime + 10, audioDuration);
   };
 
-  const handleRepeatChange = (_: React.ChangeEvent<HTMLInputElement>, checked: boolean) => {
-    setIsRepeat(checked);
+  const handleRepeatButtonClick = () => {
+    const nextIndex = (repeatStateIndex + 1) % repeatStates.length;
+    setRepeatStateIndex(nextIndex);
   };
 
   // handle song change
@@ -274,14 +314,10 @@ function AudioPlayer() {
             <SkipNextIcon />
           </IconButton>
         </Tooltip>
-        <Tooltip title="Repeat" placement="top">
-          <Checkbox
-            inputProps={{ "aria-label": "Repeat" }}
-            icon={<RepeatIcon />}
-            checkedIcon={<RepeatOnIcon />}
-            checked={isRepeat}
-            onChange={handleRepeatChange}
-          />
+        <Tooltip title={repeatStateData.title} placement="top">
+          <IconButton aria-label={repeatStateData.title} color={repeatStateData.color} onClick={handleRepeatButtonClick}>
+            {repeatStateData.icon}
+          </IconButton>
         </Tooltip>
         {smAndUp && <NextSongTimeoutProgress />}
       </Box>
